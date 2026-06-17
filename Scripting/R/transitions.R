@@ -1,16 +1,19 @@
-Params2TranVectorT <- function(re_ind,len,params_tran){
-  return(t(sapply(c(2:(len)),FUN = Params2Tran,params_tran = params_tran,re_ind=re_ind)))
+Params2TranVectorT <- function(re_ind,len,params_tran,period_len){
+  return(t(sapply(c(2:(len)),FUN = Params2Tran,params_tran = params_tran,
+                  re_ind = re_ind, period_len = period_len)))
 }
 
 #similar to below but transposes and compiles output into single matrix
 #needed for faster derivations
-Params2TranVectorTresid <- function(re_ind,len,params_tran){
-  return(t(sapply(c(1:(len)),FUN = Params2Tran,params_tran = params_tran,re_ind=re_ind)))
+Params2TranVectorTresid <- function(re_ind,len,params_tran,period_len){
+  return(t(sapply(c(1:(len)),FUN = Params2Tran,params_tran = params_tran,
+                  re_ind = re_ind, period_len = period_len)))
 }
 
 #Calculates list of transition probabilities over all times
-TranByTimeVec <- function(re_ind, params_tran,time_vec){
-  return(lapply(time_vec, Params2Tran, params_tran = params_tran,re_ind=re_ind))
+TranByTimeVec <- function(re_ind, params_tran,time_vec,period_len){
+  return(lapply(time_vec, Params2Tran, params_tran = params_tran,
+                re_ind = re_ind, period_len = period_len))
 }
 
 Param2TranHelper <- function(p12,p21){
@@ -23,7 +26,7 @@ Param2TranHelper <- function(p12,p21){
 }
 
 #takes vector of transition parameters and outputs transition matrix given current time and mixture
-Params2Tran <- function(params_tran,time,re_ind){
+Params2Tran <- function(params_tran,time,re_ind,period_len){
 
   param_matrix <- matrix(params_tran[re_ind,],ncol=3,nrow=2, byrow = T)
   tran <- Param2TranHelper(param_matrix[1,1]+param_matrix[1,2]*cos(2*pi*time/period_len)+param_matrix[1,3]*sin(2*pi*time/period_len),
@@ -34,10 +37,7 @@ Params2Tran <- function(params_tran,time,re_ind){
 
 #Generates transition matrices across time as one large matrix for faster computation
 #Outer index mixture and then by week/weekend
-GenTranColVecList <- function(params_tran_array,mix_num,vcovar_num){
-
-  len <- dim(act)[1]
-  mix_num <- dim(emit_act)[3]
+GenTranColVecList <- function(params_tran_array,len,mix_num,vcovar_num,period_len){
 
   mixture_vcovar_tran_list <- list()
   vcovar_tran_list <- list()
@@ -46,7 +46,8 @@ GenTranColVecList <- function(params_tran_array,mix_num,vcovar_num){
     for (vcovar_ind in 1:vcovar_num){
       params_tran <- params_tran_array[,,vcovar_ind]
       if (mix_num == 1) {params_tran <- matrix(params_tran,nrow = 1)}
-      vcovar_tran_list[[vcovar_ind]] <- Params2TranVectorT(mixture_ind,len,params_tran)
+      vcovar_tran_list[[vcovar_ind]] <- Params2TranVectorT(mixture_ind,len,params_tran,
+                                                           period_len = period_len)
 
     }
     mixture_vcovar_tran_list[[mixture_ind]] <- vcovar_tran_list
@@ -57,7 +58,7 @@ GenTranColVecList <- function(params_tran_array,mix_num,vcovar_num){
 
 #Generates big list of all transition matrices
 #Outer index by mixture then by week/weekend then by time
-GenTranList <- function(params_tran_array,time_vec,mix_num,vcovar_num){
+GenTranList <- function(params_tran_array,time_vec,mix_num,vcovar_num,period_len){
   mixture_vcovar_tran_list <- list()
   vcovar_tran_list <- list()
 
@@ -68,7 +69,8 @@ GenTranList <- function(params_tran_array,time_vec,mix_num,vcovar_num){
       if (mix_num == 1) {params_tran <- matrix(params_tran,nrow = 1)}
       vcovar_tran_list[[vcovar_ind]] <- TranByTimeVec(re_ind = mixture_ind,
                                                       params_tran = params_tran,
-                                                      time_vec = time_vec)
+                                                      time_vec = time_vec,
+                                                      period_len = period_len)
 
     }
     mixture_vcovar_tran_list[[mixture_ind]] <- vcovar_tran_list
@@ -87,6 +89,7 @@ CalcTranHelper <- function(act, light, tran_list_mat, emit_act, emit_light,
   num_people = dim(act)[2]
   len = dim(act)[1]
   num_re = dim(emit_act)[3]
+  mix_num <- num_re
 
   tran_vals_re_array <- array(NA,c(2,2,len - 1,num_people,num_re))
 
@@ -124,6 +127,8 @@ Symmetricize <- function(mat){
 
 #Calculates gradient and hessian for transition probabilities within transition helper
 CalcGradHess <- function(gradient,hessian_vec,cos_part_vec,sin_part_vec,cos_sin_part){
+  mix_num <- dim(gradient)[3]
+  vcovar_num <- dim(gradient)[4]
   grad_array <- array(0,dim = c(6,mix_num,vcovar_num))
   hess_array <- array(0,dim = c(6,6,mix_num,vcovar_num))
 
@@ -166,11 +171,11 @@ CalcGradHess <- function(gradient,hessian_vec,cos_part_vec,sin_part_vec,cos_sin_
 #heavy lifting of LM for transition
 CalcTranCHelper <- function(alpha,beta,act,light,params_tran_array,emit_act,emit_light,
                       corr_mat,pi_l,lod_act,lod_light,lintegral_mat, vcovar_mat,
-                      lambda_act_mat, lambda_light_mat, tobit, check_tran,likelihood){
+                      lambda_act_mat, lambda_light_mat, tobit, check_tran,likelihood,
+                      period_len, vcovar_num = dim(params_tran_array)[3]){
 
   len <- dim(act)[1]
   mix_num <- dim(emit_act)[3]
-  params_tran_array_working <- params_tran_array
 
   gradient <- array(0,c(2,3,mix_num,vcovar_num))
   hessian_vec <- array(0,c(2,3,mix_num,vcovar_num))
@@ -179,7 +184,8 @@ CalcTranCHelper <- function(alpha,beta,act,light,params_tran_array,emit_act,emit
   cos_sin_part <- array(0,c(2,mix_num,vcovar_num))
 
   # tran_list_mat <- lapply(c(1:mix_num),Params2TranVectorT, len = len, params_tran = params_tran)
-  tran_list_mat <- GenTranColVecList(params_tran_array,mix_num,vcovar_num)
+  tran_list_mat <- GenTranColVecList(params_tran_array,len,mix_num,vcovar_num,
+                                     period_len = period_len)
   ind_like_vec <- unlist(lapply(c(1:length(alpha)),IndLike,alpha = alpha, pi_l = pi_l, len = len))
 
   tran_vals_re_array <- CalcTranHelper(act = act,
@@ -273,7 +279,11 @@ CalcTranCHelper <- function(alpha,beta,act,light,params_tran_array,emit_act,emit
 
 #levenberg marquardt
 #interpolates btwn newton and gradient descent
-LM <- function(grad_array,hess_array,params_tran_array,check_tran,likelihood,pi_l, step_size = .01){
+LM <- function(grad_array,hess_array,params_tran_array,check_tran,likelihood,pi_l,
+               mix_num = dim(params_tran_array)[1],
+               vcovar_num = dim(params_tran_array)[3],
+               tran_check_context = NULL,
+               step_size = .01){
   params_tran_array_new <- params_tran_array
   new_likelihood <- -Inf
 
@@ -299,16 +309,29 @@ LM <- function(grad_array,hess_array,params_tran_array,check_tran,likelihood,pi_
 
   #Like decrease may happen here
   if (check_tran){
-    tran_list <- GenTranList(params_tran_array_new,c(1:day_length),mix_num,vcovar_num)
-    alpha <- Forward(act = act,light = light,
-                     init = init,tran_list = tran_list,
-                     emit_act = emit_act,emit_light = emit_light,
-                     lod_act = lod_act, lod_light = lod_light,
-                     corr_mat = corr_mat, beta_vec = beta_vec, surv_coef = surv_coef,surv_covar_risk_vec = surv_covar_risk_vec,
-                     event_vec = surv_event, bline_vec = bline_vec, cbline_vec = cbline_vec,
-                     lintegral_mat = lintegral_mat,log_sweight = log_sweights_vec,
-                     surv_covar = surv_covar, vcovar_mat = vcovar_mat,
-                     lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,tobit = tobit,incl_surv = incl_surv)
+    if (is.null(tran_check_context)){
+      stop("tran_check_context is required when check_tran is TRUE")
+    }
+    ctx <- tran_check_context
+    tran_list <- GenTranList(params_tran_array_new,seq_len(ctx$day_length),
+                             ctx$mix_num,ctx$vcovar_num,
+                             period_len = ctx$period_len)
+    alpha <- Forward(act = ctx$act,light = ctx$light,
+                     init = ctx$init,tran_list = tran_list,
+                     emit_act = ctx$emit_act,emit_light = ctx$emit_light,
+                     lod_act = ctx$lod_act, lod_light = ctx$lod_light,
+                     corr_mat = ctx$corr_mat, beta_vec = ctx$beta_vec,
+                     surv_coef = ctx$surv_coef,
+                     surv_covar_risk_vec = ctx$surv_covar_risk_vec,
+                     event_vec = ctx$surv_event, bline_vec = ctx$bline_vec,
+                     cbline_vec = ctx$cbline_vec,
+                     lintegral_mat = ctx$lintegral_mat,
+                     log_sweights_vec = ctx$log_sweights_vec,
+                     surv_covar = ctx$surv_covar, vcovar_mat = ctx$vcovar_mat,
+                     lambda_act_mat = ctx$lambda_act_mat,
+                     lambda_light_mat = ctx$lambda_light_mat,
+                     tobit = ctx$tobit,incl_surv = ctx$incl_surv,
+                     beta_bool = ctx$beta_bool, mix_num = ctx$mix_num)
     new_like <- CalcLikelihood(alpha,pi_l)
 
     if (new_like < likelihood){
@@ -338,7 +361,7 @@ SolveCatch <- function(hess,grad) {
 }
 
 #turns transition matrices into dataframe for analyzing later
-ParamsArray2DF <- function(params_tran_array){
+ParamsArray2DF <- function(params_tran_array,period_len,vcovar_num = dim(params_tran_array)[3]){
 
   tran_df <- data.frame(prob = c(),
                         type = c(),
@@ -353,7 +376,8 @@ ParamsArray2DF <- function(params_tran_array){
       params_tran <- params_tran_array[,,vcovar_ind]
       if (dim(params_tran_array)[1] == 1) {params_tran <- matrix(params_tran,nrow = 1)}
 
-      tran_mat <- Params2TranVectorTresid(re_ind,period_len,params_tran)
+      tran_mat <- Params2TranVectorTresid(re_ind,period_len,params_tran,
+                                          period_len = period_len)
       tosleep <- tran_mat[,3]
       towake <- tran_mat[,2]
 
@@ -391,7 +415,9 @@ CalcPi <- function(nu_mat,nu_covar_mat){
 
 #Calculates ordinal logistic regression coef for pi
 #Uses LM
-CalcNu <- function(nu_mat,re_prob,nu_covar_mat){
+CalcNu <- function(nu_mat,re_prob,nu_covar_mat,alpha,
+                   mix_num = ncol(re_prob),
+                   num_of_people = nrow(re_prob)){
   if(dim(re_prob)[2] == 1){return(nu_mat)}
   old_mlike <- CalcLikelihood(alpha,CalcPi(nu_mat,nu_covar_mat))
   mlike_diff <- -1

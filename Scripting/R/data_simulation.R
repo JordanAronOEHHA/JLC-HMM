@@ -99,7 +99,8 @@ SimulateHMM <- function(day_length,num_of_people,init,params_tran_array,
 
   vcovar_mat <- replicate(num_of_people, vcovar_vec)
 
-  tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+  tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                           period_len = period_len)
 
 
   #actually simulates data here

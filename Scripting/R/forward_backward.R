@@ -208,7 +208,8 @@ ViterbiIndHelper <- function(ind,clust_i,act,light,vcovar_mat){
 }
 
 #forward algorithm but only uses decoded data, not activity/light
-ForwardAlt <- function(post_decode_collapsed,init,tran_list,vcovar_mat){
+ForwardAlt <- function(post_decode_collapsed,init,tran_list,vcovar_mat,
+                       mix_num = nrow(init)){
   alpha_list <- list()
 
   for (ind in 1:dim(post_decode_collapsed)[2]){
@@ -227,7 +228,8 @@ Forward <- function(act, light,init,tran_list,
                     emit_act, emit_light,
                     lod_act, lod_light, corr_mat, beta_vec, surv_coef, surv_covar_risk_vec,
                     event_vec, bline_vec, cbline_vec, lintegral_mat, log_sweights_vec,
-                    surv_covar, vcovar_mat, lambda_act_mat, lambda_light_mat, tobit, incl_surv){
+                    surv_covar, vcovar_mat, lambda_act_mat, lambda_light_mat, tobit, incl_surv,
+                    beta_bool, mix_num = dim(emit_act)[3]){
 
   alpha_list <- list()
   day_length <- dim(act)[1]
@@ -251,7 +253,7 @@ Forward <- function(act, light,init,tran_list,
     for (clust_i in 1:mix_num){
       alpha_array[,,clust_i] <- ForwardIndC(act[,ind], light[,ind], init[clust_i,], tran_list, emit_act_week, emit_light_week,
                                             emit_act_weekend, emit_light_weekend,clust_i-1, lod_act, lod_light, corr_mat,
-                                            beta_vec,covar_risk,surv_event[ind], bline_vec[ind], cbline_vec[ind], lintegral_mat,
+                                            beta_vec,covar_risk,event_vec[ind], bline_vec[ind], cbline_vec[ind], lintegral_mat,
                                             ind_log_sweight, vcovar_mat[,ind],lambda_act_mat, lambda_light_mat, tobit, adj_incl_surv*beta_bool)
       alpha_list[[ind]] <- alpha_array
     }
@@ -263,7 +265,9 @@ Forward <- function(act, light,init,tran_list,
 Backward <- function(act, light, tran_list,
                      emit_act, emit_light,
                      lod_act, lod_light, corr_mat, lintegral_mat, vcovar_mat,
-                     lambda_act_mat, lambda_light_mat, tobit){
+                     lambda_act_mat, lambda_light_mat, tobit,
+                     mix_num = dim(emit_act)[3],
+                     day_length = dim(act)[1]){
 
   beta_list <- list()
 

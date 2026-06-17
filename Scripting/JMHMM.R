@@ -25,10 +25,11 @@ source_jmhmm_module <- function(module_file){
   stop(paste("Could not find module:",module_file))
 }
 
+# Load modules in dependency order.
 for (module_file in c("constants.R","saved_results.R","validation.R",
                       "settings.R","params.R","transitions.R",
                       "emissions_tobit.R","forward_backward.R",
-                      "data_simulation.R", "helpers.R",
+                      "data_simulation.R","helpers.R","data_nhanes.R",
                       "survival.R","diagnostics.R")){
   source_jmhmm_module(module_file)
 }
@@ -83,6 +84,7 @@ beta_age_true <- true_param_list$beta_age
 lambda_act_mat_true <- true_param_list$lambda_act_mat
 lambda_light_mat_true <- true_param_list$lambda_light_mat
 
+#should only differ from in scenario where we simulate data to see if we can recover correct number of LC
 fit_param_list <- CreateDefaultParams(fit_mix_num, vcovar_num)
 validate_param_list(fit_param_list,fit_mix_num,vcovar_num,"fit_param_list")
 init_start <- fit_param_list$init
@@ -223,216 +225,18 @@ if (!real_data){
 ###### Read in Data ###### 
 
 if (real_data) {
-  #loads in NHANES
-  setwd("Data/")
-  load("NHANES_2011_2012_2013_2014.rda")
-  nhanes1 <- NHANES_mort_list[[1]] %>% filter(eligstat == 1)
-  nhanes2 <- NHANES_mort_list[[2]] %>% filter(eligstat == 1)
-  lmf_data <- rbind(nhanes1,nhanes2)
-  
-  #depending on period len, loads in different data
-  if (period_len == HOURLY_PERIODS_PER_DAY){
-    load("Wavedata24_G.rda")
-    load("Wavedata24_H.rda")
-  } else if(period_len == DEFAULT_PERIODS_PER_DAY){
-    load("Wavedata_G.rda")
-    load("Wavedata_H.rda")
-  } else if(period_len == MINUTE_PERIODS_PER_DAY){
-    load("Wavedata1440_G.rda")
-    load("Wavedata1440_H.rda")
-  }
-  
-  setwd("..")
-  
-  #preps and combines 2 wakes of act data
-  act_G <- wave_data_G[[1]]
-  act_H <- wave_data_H[[1]]
-  act <- rbind(act_G,act_H)
-  act <- t(act[,-1])
-  act0 <- act == 0
-  act <- log(act)
-  lod_act <- min(act[act!=-Inf],na.rm = T) - LOD_OFFSET
-  act[act0] <- lod_act
-  
-  
-  #preps and combines 2 wakes of light data
-  light_G <- wave_data_G[[2]]
-  light_H <- wave_data_H[[2]]
-  light <- rbind(light_G,light_H)
-  light <- t(light[,-1])
-  light0 <- light == 0
-  light <- log(light)
-  lod_light <- min(light[light!=-Inf],na.rm = T) - LOD_OFFSET
-  light[light0] <- lod_light
-  
-  id_G <- wave_data_G[[3]]
-  id_H <- wave_data_H[[3]]
-  id <- rbind(id_G,id_H)
-  
-  mims_G <- wave_data_G[[4]]
-  mims_H <- wave_data_H[[4]]
-  mims <- rbind(mims_G,mims_H)
-  
-  #matches actigraphy data to public mortality data
-  seqn_com_id <- id$SEQN %in% lmf_data$seqn
-  seqn_com_lmf <- lmf_data$seqn %in% id$SEQN
-  
-  id <- id[seqn_com_id,]
-  act <- act[,seqn_com_id]
-  light <- light[,seqn_com_id]
-  mims <- mims[seqn_com_id,]
-  
-  lmf_data <- lmf_data[seqn_com_lmf,]
-  
-  #sanity check
-  if (sum(id$SEQN - lmf_data$seqn) != 0){print("LMF NOT LINKED CORRECTLY")}
-  
-  #sample weights for 2 waves
-  log_sweights_vec <- log(id$sweights/NHANES_NUM_WAVES)
-  
-  id <- id %>% mutate(age_disc = case_when(age <=30 ~ 1,
-                                           age <=50 & age > 30 ~ 2,
-                                           age <=65 & age > 50 ~ 3,
-                                           age > 65 ~ 4))
-  
-  id <- id %>% mutate(pov_disc = floor(poverty)+1)
-  
-  id$modact <- id$modact - 1
-  
-  surv_event <- lmf_data$mortstat
-  surv_time <- lmf_data$permth_exm
-  
-  
-    
-  
-  #resample data for variance estimation
-  if (bootstrap){
-    boot_inds <- sample(dim(act)[2],dim(act)[2],T)
-    act <- act[,boot_inds]
-    light <- light[,boot_inds]
-    id <- id[boot_inds,]
-    surv_event <- surv_event[boot_inds]
-    surv_time <- surv_time[boot_inds]
-    
-  }
-  
-  #saves original data before LOCV
-  act_old <- act
-  light_old <- light
-  
-  #cross validation
-  if (leave_out){
-    
-    setwd("Data")
-    #previously calculated who is left in/out for each seed
-    load("LeaveOutMat.rda")
-    setwd("..")
-    leave_out_inds <- leave_out_mat[sim_num,]
-    leave_out_inds <- leave_out_inds[!is.na(leave_out_inds)]
-    
-    
-    act_old <- act
-    light_old <- light
-    id_old <- id
-    surv_event_old <- surv_event
-    surv_time_old <- surv_time
-    log_sweights_vec_old <- log_sweights_vec
-    
-    first_day_vec_old <- as.numeric(id_old$PAXDAYWM)
-    vcovar_mat_old <- sapply(first_day_vec_old,FirstDay2WeekInd)
-    
-    surv_covar_old <- list(id_old$age,
-                       Vec2Mat(id_old$gender+1),
-                       Vec2Mat(id_old$race+1),
-                       Vec2Mat(id_old$overall_health+1),
-                       Vec2Mat(id_old$education+1),
-                       Vec2Mat(id_old$bmi_disc+1),
-                       Vec2Mat(id_old$diabetes+1),
-                       Vec2Mat(id_old$CHD+1),
-                       Vec2Mat(id_old$CHF+1),
-                       Vec2Mat(id_old$heart_attack+1),
-                       Vec2Mat(id_old$stroke+1),
-                       Vec2Mat(id_old$alcohol+1),
-                       Vec2Mat(id_old$smoking+1),
-                       Vec2Mat(id_old$phyfunc+1))
-    
-    age_vec_old <-id_old$age
-    statact_vec_old <- id_old$statact
-    nu_covar_mat_old <- cbind(age_vec_old/10,(age_vec_old/10)^2,statact_vec_old,statact_vec_old^2)
-    
-    act <- act[,-c(leave_out_inds)]
-    light <- light[,-c(leave_out_inds)]
-    id <- id[-c(leave_out_inds),]
-    surv_event <- surv_event[-c(leave_out_inds)]
-    surv_time <- surv_time[-c(leave_out_inds)]
-    
-    log_sweights_vec <- log(id$sweights/NHANES_NUM_WAVES)
-    
-  }
-  
-  first_day_vec <- as.numeric(id$PAXDAYWM)
-  vcovar_mat <- sapply(first_day_vec,FirstDay2WeekInd)
-  
-  #if single day can reduce memory used
-  if (single_day != 0){
-    single_day_mat <- sapply(first_day_vec,FirstDay2SingleDay,target_day = single_day)
-    new_act <- matrix(NA,period_len,dim(act)[2])
-    new_light <- matrix(NA,period_len,dim(light)[2])
-    vcovar_mat <- matrix(0,period_len,dim(light)[2])
-    
-    for (i in 1:dim(act)[2]){
-      new_act[,i] <- act[,i][single_day_mat[,i]==1]
-      new_light[,i] <- light[,i][single_day_mat[,i]==1]
-    }
-    
-    act <- new_act
-    light <- new_light
-  }
-  
-  day_length <- dim(act)[1]
-  num_of_people <- dim(act)[2]
-  
-  age_vec <-id$age
-  modact_vec <- id$modact
-  statact_vec <- id$statact
-  nu_covar_mat <- cbind(age_vec/10,(age_vec/10)^2,statact_vec,statact_vec^2)
-
-  #sets of sociodemo covar list
-  surv_covar <- list(id$age,
-                     Vec2Mat(id$gender+1),
-                     Vec2Mat(id$race+1),
-                     Vec2Mat(id$overall_health+1),
-                     Vec2Mat(id$education+1),
-                     Vec2Mat(id$bmi_disc+1),
-                     Vec2Mat(id$diabetes+1),
-                     Vec2Mat(id$CHD+1),
-                     Vec2Mat(id$CHF+1),
-                     Vec2Mat(id$heart_attack+1),
-                     Vec2Mat(id$stroke+1),
-                     Vec2Mat(id$alcohol+1),
-                     Vec2Mat(id$smoking+1),
-                     Vec2Mat(id$phyfunc+1))
-
-  #initializes survival covariates
-  if (!load_data){
-    surv_coef_true <- lapply(surv_covar[-1],SurvCovar2Coef)
-    surv_coef_true <- append(list(.05),surv_coef_true)
-  }
-  surv_coef_len <- unlist(lapply(surv_coef_true,length))
-  surv_coef <- surv_coef_true
-  
-  #all sociodemo covar values
-  combined_covar_mat <- id %>% dplyr::select(gender,race,overall_health,education,bmi_disc,diabetes,
-                                             race,CHD,CHF,heart_attack,stroke,alcohol,smoking,phyfunc)
-  combined_covar_mat <- lapply(combined_covar_mat, factor)
-  
-  if (weekend_only){
-    #Only weekend data
-    
-    act[vcovar_mat == 0] <- NA
-    light[vcovar_mat == 0] <- NA
-  }
-    
+  nhanes_data <- prepare_nhanes_data(
+    period_len = period_len,
+    bootstrap = bootstrap,
+    leave_out = leave_out,
+    sim_num = sim_num,
+    single_day = single_day,
+    weekend_only = weekend_only,
+    load_data = load_data,
+    surv_coef_true = get0("surv_coef_true",ifnotfound = NULL),
+    data_dir = "Data"
+  )
+  invisible(list2env(nhanes_data,envir = environment()))
 }
 
 ###### Initial Settings ###### 
@@ -528,6 +332,7 @@ corr_mat[corr_mat<-.99] <- -.99
 beta_vec <- beta_vec_start + runif(mix_num,-randomize_init,randomize_init)
 beta_vec[1] <- 0
 
+##### Randomize survival starting values #####
 for (i in 1:length(surv_coef)){
   surv_coef[[i]] <-surv_coef_true[[i]]  +  runif(length(surv_coef_true[[i]]),-randomize_init/10,randomize_init/10)
   if (length(surv_coef[[i]]) != 1){surv_coef[[i]][1] <- 0} 
@@ -587,7 +392,8 @@ cbline_vec <- bhaz_vec[[2]]
 
 #caluclates case4 probabilities ahead of time and transition list
 lintegral_mat <- CalcLintegralMat(emit_act,emit_light,corr_mat,lod_act,lod_light)
-tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                         period_len = period_len)
 
 print("Pre Alpha")
 alpha <- Forward(act = act,light = light,
@@ -596,15 +402,18 @@ alpha <- Forward(act = act,light = light,
          lod_act = lod_act, lod_light = lod_light, 
          corr_mat = corr_mat, beta_vec = beta_vec, surv_coef = surv_coef,surv_covar_risk_vec = surv_covar_risk_vec,
          event_vec = surv_event, bline_vec = bline_vec, cbline_vec = cbline_vec,
-         lintegral_mat = lintegral_mat,log_sweight = log_sweights_vec,
+         lintegral_mat = lintegral_mat,log_sweights_vec = log_sweights_vec,
          surv_covar = surv_covar, vcovar_mat = vcovar_mat,
-         lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,tobit = tobit,incl_surv = incl_surv)
+         lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+         tobit = tobit,incl_surv = incl_surv,beta_bool = beta_bool,
+         mix_num = mix_num)
 
 beta <- Backward(act = act,light = light, tran_list = tran_list,
                  emit_act = emit_act,emit_light = emit_light,
                   lod_act = lod_act, lod_light =  lod_light, 
                   corr_mat = corr_mat,lintegral_mat = lintegral_mat,vcovar_mat = vcovar_mat,
-                  lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,tobit = tobit)
+                  lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+                  tobit = tobit,mix_num = mix_num,day_length = day_length)
          
 print("Post Beta")
 new_likelihood <- CalcLikelihood(alpha,pi_l)
@@ -621,22 +430,67 @@ if (!real_data){stop_crit <- stop_crit * SIM_STOP_CRIT_MULTIPLIER}
 # if(mix_num > 12){stop_crit <- stop_crit * 10}
 # if(mix_num > 15){stop_crit <- stop_crit * 5}
 
-while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_surv){
+##### Named EM containers #####
+# Fixed inputs are grouped separately from parameters that change during EM.
+em_inputs <- list(
+  longitudinal = list(
+    act = act,
+    light = light,
+    vcovar_mat = vcovar_mat,
+    lod_act = lod_act,
+    lod_light = lod_light,
+    log_sweights_vec = log_sweights_vec
+  ),
+  survival = list(
+    time = surv_time,
+    event = surv_event,
+    covariates = surv_covar
+  ),
+  dimensions = list(
+    day_length = day_length,
+    num_of_people = num_of_people,
+    mix_num = mix_num,
+    vcovar_num = vcovar_num,
+    period_len = period_len
+  )
+)
+
+em_control <- list(
+  convergence_tolerance = stop_crit,
+  minimum_iterations = MIN_EM_ITERATIONS,
+  interim_save_every = INTERIM_SAVE_EVERY,
+  reorder_tolerance_multiplier = REORDER_STOP_CRIT_MULTIPLIER,
+  survival_start_iteration = 3,
+  run_only_survival = run_only_surv,
+  check_transition_update = check_tran
+)
+
+# start_params already separates the randomized starting parameters from estimates.
+em_initial_state <- list(
+  parameters = start_params,
+  mixture_probabilities = pi_l,
+  random_effect_probabilities = re_prob,
+  likelihood = new_likelihood
+)
+
+while((abs(like_diff) > em_control$convergence_tolerance |
+       iter_count < em_control$minimum_iterations) &
+      !em_control$run_only_survival){
+  ##### EM iteration: bookkeeping #####
   start_time <- Sys.time()
   likelihood <- new_likelihood
   
-  ##### MC Param  #####
-  
-  #### Mixing Proportion  #####
+  ##### E-step: latent-class probabilities #####
   re_prob <- CalcProbRE(alpha,pi_l)
   survival_context <- update_survival_context_re_prob(survival_context,
                                                       re_prob,fit_mix_num)
   
-  ##### Survival ####
+  ##### M-step: mixing and survival parameters #####
   #need model to fit a bit first otherwise may run into some instability
   if(beta_bool){
 
-    nu_mat  <- CalcNu(nu_mat,re_prob,nu_covar_mat)
+    nu_mat  <- CalcNu(nu_mat,re_prob,nu_covar_mat,alpha = alpha,
+                      mix_num = mix_num,num_of_people = num_of_people)
     pi_l <- CalcPi(nu_mat,nu_covar_mat)
     re_prob <- CalcProbRE(alpha,pi_l)
     survival_context <- update_survival_context_re_prob(survival_context,
@@ -665,14 +519,14 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
       
   }
   
-  #### Weights  #####
+  ##### E-step: posterior wake/sleep weights #####
   #calculates wake/sleep probabilities, needed for emission dist estimation
   weights_array_list <- CondMarginalize(alpha,beta,pi_l)
   weights_array_wake <- exp(weights_array_list[[1]])
   weights_array_sleep <- exp(weights_array_list[[2]])
 
   
-  ##### Tobit bivariate normal emission update #####
+  ##### M-step: Tobit emission parameters #####
   if(incl_light){
 
     emit_light[1,1,,] <- UpdateNorm(CalcLightMean,1,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array_wake,weights_array_sleep,vcovar_mat+1)
@@ -696,32 +550,71 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
 
   }
   
-  ###
+  ##### M-step: initial-state probabilities #####
   #this only relies on normal parameters so calculate it now
   lintegral_mat <- CalcLintegralMat(emit_act,emit_light,corr_mat,lod_act,lod_light)
   init <- CalcInit(alpha,beta,pi_l,log_sweights_vec)
   
+  ##### M-step: transition parameters #####
   #saves old transition values in case likelihood decrease
   params_tran_array_old <- params_tran_array
   #gradient and hessian for tran parameters
   tran_gradhess_list <- CalcTranCHelper(alpha,beta,act,light,params_tran_array,
                                         emit_act,emit_light,corr_mat,
                                         pi_l,lod_act,lod_light,lintegral_mat,vcovar_mat,
-                                        lambda_act_mat, lambda_light_mat, tobit, check_tran,likelihood)
-  
-  params_tran_array <- LM(tran_gradhess_list[[1]],tran_gradhess_list[[2]],params_tran_array,check_tran,likelihood,pi_l)
-  
-  tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+                                        lambda_act_mat, lambda_light_mat, tobit,
+                                        em_control$check_transition_update,likelihood,
+                                        period_len = period_len, vcovar_num = vcovar_num)
 
+  tran_check_context <- list(day_length = em_inputs$dimensions$day_length,
+                             period_len = em_inputs$dimensions$period_len,
+                             mix_num = em_inputs$dimensions$mix_num,
+                             vcovar_num = em_inputs$dimensions$vcovar_num,
+                             act = em_inputs$longitudinal$act,
+                             light = em_inputs$longitudinal$light,
+                             init = init,
+                             emit_act = emit_act,
+                             emit_light = emit_light,
+                             lod_act = em_inputs$longitudinal$lod_act,
+                             lod_light = em_inputs$longitudinal$lod_light,
+                             corr_mat = corr_mat,
+                             beta_vec = beta_vec,
+                             surv_coef = surv_coef,
+                             surv_covar_risk_vec = surv_covar_risk_vec,
+                             surv_event = em_inputs$survival$event,
+                             bline_vec = bline_vec,
+                             cbline_vec = cbline_vec,
+                             lintegral_mat = lintegral_mat,
+                             log_sweights_vec = em_inputs$longitudinal$log_sweights_vec,
+                             surv_covar = em_inputs$survival$covariates,
+                             vcovar_mat = em_inputs$longitudinal$vcovar_mat,
+                             lambda_act_mat = lambda_act_mat,
+                             lambda_light_mat = lambda_light_mat,
+                             tobit = tobit,
+                             incl_surv = incl_surv,
+                             beta_bool = beta_bool)
+
+  params_tran_array <- LM(tran_gradhess_list[[1]],tran_gradhess_list[[2]],
+                          params_tran_array,
+                          em_control$check_transition_update,likelihood,pi_l,
+                          mix_num = mix_num,vcovar_num = vcovar_num,
+                          tran_check_context = tran_check_context)
+
+  tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                           period_len = period_len)
+
+  ##### Likelihood refresh and transition rollback check #####
   alpha <- Forward(act = act,light = light,
                    init = init,tran_list = tran_list,
                    emit_act= emit_act,emit_light = emit_light,
                    lod_act = lod_act, lod_light = lod_light,
                    corr_mat = corr_mat, beta_vec = beta_vec, surv_coef = surv_coef,surv_covar_risk_vec = surv_covar_risk_vec,
                    event_vec = surv_event, bline_vec = bline_vec, cbline_vec = cbline_vec,
-                   lintegral_mat = lintegral_mat,log_sweight = log_sweights_vec,
+                   lintegral_mat = lintegral_mat,log_sweights_vec = log_sweights_vec,
                    surv_covar = surv_covar, vcovar_mat = vcovar_mat,
-                   lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat, tobit = tobit,incl_surv = incl_surv*beta_bool)
+                   lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+                   tobit = tobit,incl_surv = incl_surv*beta_bool,
+                   beta_bool = beta_bool,mix_num = mix_num)
   
   new_likelihood <- CalcLikelihood(alpha,pi_l)
   
@@ -740,7 +633,8 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
     print("Transition Likelihood Decrease")
 
     params_tran_array <- params_tran_array_old
-    tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+    tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                             period_len = period_len)
 
     alpha <- Forward(act = act,light = light,
                      init = init,tran_list = tran_list,
@@ -748,9 +642,11 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
                      lod_act = lod_act, lod_light = lod_light,
                      corr_mat = corr_mat, beta_vec = beta_vec, surv_coef = surv_coef, surv_covar_risk_vec = surv_covar_risk_vec,
                      event_vec = surv_event, bline_vec = bline_vec, cbline_vec = cbline_vec,
-                     lintegral_mat = lintegral_mat,log_sweight = log_sweights_vec,
+                     lintegral_mat = lintegral_mat,log_sweights_vec = log_sweights_vec,
                      surv_covar = surv_covar, vcovar_mat = vcovar_mat,
-                     lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat, tobit = tobit,incl_surv = incl_surv)
+                     lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+                     tobit = tobit,incl_surv = incl_surv,
+                     beta_bool = beta_bool,mix_num = mix_num)
 
     new_likelihood <- CalcLikelihood(alpha,pi_l)
     if (incl_surv == MODEL_TYPE_CODES[["joint"]] & beta_bool == 0){new_likelihood <- new_likelihood - SurvLike(beta_vec,surv_covar_risk_vec,surv_coef,survival_context)}
@@ -764,20 +660,23 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
   time_vec <- c(time_vec,as.numeric(difftime(end_time, start_time, units = "secs")))
   
   # after a few iterations don't have any issues with survival estimation stability
-  if (iter_count == 3){
+  if (iter_count == em_control$survival_start_iteration){
     beta_bool <- T
     print("Starting to Est Survival and Age Mixing Effect")
   }
   
   iter_count <- iter_count + 1
   
-  
+  ##### Interim checkpoint #####
   #saves info every few iterations just in case
-  if (iter_count %% INTERIM_SAVE_EVERY == 0){
+  if (iter_count %% em_control$interim_save_every == 0){
     
-    tran_df <- ParamsArray2DF(params_tran_array)
+    tran_df <- ParamsArray2DF(params_tran_array,period_len = period_len,
+                              vcovar_num = vcovar_num)
     if (!real_data & true_mix_num == fit_mix_num){
-      tran_df_true <- ParamsArray2DF(params_tran_array_true)
+      tran_df_true <- ParamsArray2DF(params_tran_array_true,
+                                     period_len = period_len,
+                                     vcovar_num = vcovar_num)
       tran_df_truth <- tran_df_true[,1]
       
       tran_df <- tran_df %>% mutate(truth = tran_df_truth)
@@ -824,8 +723,12 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
   }
   
   
+  ##### Latent-label alignment #####
   #reorders clusters from best to worst survival
-  if ((abs(like_diff) < stop_crit*REORDER_STOP_CRIT_MULTIPLIER) & !relabel_reset & !bootstrap & !leave_out & real_data){
+  if ((abs(like_diff) <
+       em_control$convergence_tolerance *
+       em_control$reorder_tolerance_multiplier) &
+      !relabel_reset & !bootstrap & !leave_out & real_data){
     relabel_reset <- TRUE
     relabel_bool <- 0
     print("Relabelling")
@@ -874,6 +777,7 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
 
     }
     
+    ##### Align wake/sleep labels within each class and day type #####
     for (re_ind in 1:mix_num){
       for (week_ind in 1:2){
         if (emit_act[2,1,re_ind,week_ind] > emit_act[1,1,re_ind,week_ind]){
@@ -900,7 +804,8 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
           temp <- params_tran_array[re_ind,1:3,week_ind]
           params_tran_array[re_ind,1:3,week_ind] <- params_tran_array[re_ind,4:6,week_ind]
           params_tran_array[re_ind,4:6,week_ind] <- temp
-          tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+          tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                                   period_len = period_len)
 
           temp <- corr_mat[re_ind,1,week_ind]
           corr_mat[re_ind,1,week_ind] <- corr_mat[re_ind,2,week_ind]
@@ -910,7 +815,8 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
     }
     
     if (relabel_bool){
-      tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+      tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                               period_len = period_len)
       lintegral_mat <- CalcLintegralMat(emit_act,emit_light,corr_mat,lod_act,lod_light)
       
       alpha <- Forward(act = act,light = light,
@@ -919,25 +825,29 @@ while((abs(like_diff) > stop_crit | iter_count < MIN_EM_ITERATIONS) & !run_only_
                        lod_act = lod_act, lod_light = lod_light, 
                        corr_mat = corr_mat, beta_vec = beta_vec, surv_coef = surv_coef,surv_covar_risk_vec = surv_covar_risk_vec,
                        event_vec = surv_event, bline_vec = bline_vec, cbline_vec = cbline_vec,
-                       lintegral_mat = lintegral_mat,log_sweight = log_sweights_vec,
+                       lintegral_mat = lintegral_mat,log_sweights_vec = log_sweights_vec,
                        surv_covar = surv_covar, vcovar_mat = vcovar_mat,
-                       lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat, tobit = tobit,incl_surv = incl_surv*beta_bool)
+                       lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+                       tobit = tobit,incl_surv = incl_surv*beta_bool,
+                       beta_bool = beta_bool,mix_num = mix_num)
       
       new_likelihood <- CalcLikelihood(alpha,pi_l)
-      like_diff <- stop_crit * 1.1
+      like_diff <- em_control$convergence_tolerance * 1.1
     }
       
   }
   
   
+  ##### E-step: refresh backward probabilities #####
   #Finally calls beta at very end of while loop
   beta <- Backward(act = act,light = light, tran_list = tran_list,
                    emit_act = emit_act,emit_light = emit_light,
                    lod_act = lod_act, lod_light =  lod_light, 
                    corr_mat = corr_mat,lintegral_mat = lintegral_mat,vcovar_mat = vcovar_mat,
-                   lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,tobit = tobit)
+                   lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+                   tobit = tobit,mix_num = mix_num,day_length = day_length)
   
-}
+} # end EM loop
 
 #if 2-stage model, calculate survival here
 if (incl_surv != MODEL_TYPE_CODES[["joint"]]){
@@ -988,9 +898,12 @@ if(!leave_out){
 }
 
 #transition parameters for later analysis
-tran_df <- ParamsArray2DF(params_tran_array)
+tran_df <- ParamsArray2DF(params_tran_array,period_len = period_len,
+                          vcovar_num = vcovar_num)
 if (!real_data & true_mix_num == fit_mix_num){
-  tran_df_true <- ParamsArray2DF(params_tran_array_true)
+  tran_df_true <- ParamsArray2DF(params_tran_array_true,
+                                 period_len = period_len,
+                                 vcovar_num = vcovar_num)
   tran_df_truth <- tran_df_true[,1]
   
   tran_df <- tran_df %>% mutate(truth = tran_df_truth)
@@ -1049,6 +962,7 @@ if (leave_out){
 
 
   
+  ##### Initialize leave-out diagnostic containers #####
   empty_list <- vector(mode = "list", length = 6)
   for (i in 1:6){
     empty_list[[i]] <- list()
@@ -1084,7 +998,9 @@ if (leave_out){
   #Five is only act (no light\tran)
   #Six is standard
   
+  ##### Evaluate each information-removal scenario #####
   for (leave_out_type in 1:6){
+    ##### Scenario setup #####
     new_act_working <- new_act
     new_light_working <- new_light
     
@@ -1096,38 +1012,44 @@ if (leave_out){
     } 
     
     if (leave_out_type == 4 | leave_out_type == 5){
-      tran_list <- GenTranList(array(0,dim = dim(params_tran_array)),c(1:day_length),mix_num,vcovar_num)
+      tran_list <- GenTranList(array(0,dim = dim(params_tran_array)),c(1:day_length),mix_num,vcovar_num,
+                               period_len = period_len)
     } else {
-      tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num)
+      tran_list <- GenTranList(params_tran_array,c(1:day_length),mix_num,vcovar_num,
+                               period_len = period_len)
     }
     
-    
-    
+    ##### Forward-backward prediction #####
     alpha <- Forward(act = new_act_working,light = new_light_working,
                      init = init,tran_list = tran_list,
                      emit_act = emit_act,emit_light = emit_light,
                      lod_act = lod_act, lod_light = lod_light,
                      corr_mat = corr_mat, beta_vec = beta_vec, surv_coef = surv_coef, surv_covar_risk_vec = surv_covar_risk_vec_new,
-                     event_vec = numeric(100), bline_vec = numeric(100), cbline_vec = numeric(100),
-                      lintegral_mat = lintegral_mat,log_sweight = log_sweights_vec_new,
+                     event_vec = numeric(ncol(new_act_working)),
+                     bline_vec = numeric(ncol(new_act_working)),
+                     cbline_vec = numeric(ncol(new_act_working)),
+                      lintegral_mat = lintegral_mat,log_sweights_vec = log_sweights_vec_new,
                       surv_covar = new_surv_covar, vcovar_mat = new_vcovar_mat,
                       lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
-                      tobit = T,incl_surv = MODEL_TYPE_CODES[["two_stage"]])
+                      tobit = T,incl_surv = MODEL_TYPE_CODES[["two_stage"]],
+                      beta_bool = beta_bool,mix_num = mix_num)
     
+    # Match held-out observations to their own weekday/weekend sequence.
     beta <- Backward(act = new_act_working,light = new_light_working, tran_list = tran_list,
                      emit_act = emit_act,emit_light = emit_light,
                      lod_act = lod_act, lod_light =  lod_light, 
-                     corr_mat = corr_mat,lintegral_mat = lintegral_mat,vcovar_mat = vcovar_mat,
-                     lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,tobit = tobit)
-    
-    
+                     corr_mat = corr_mat,lintegral_mat = lintegral_mat,vcovar_mat = new_vcovar_mat,
+                     lambda_act_mat = lambda_act_mat,lambda_light_mat = lambda_light_mat,
+                     tobit = tobit,mix_num = mix_num,day_length = day_length)
+    ##### Posterior state and class decoding #####
     weights_array_list <- CondMarginalize(alpha,beta,new_pi_l)
     weights_array_wake <- exp(weights_array_list[[1]])
     weights_array_wake_collapsed <- apply(weights_array_wake,c(1,2),sum)
     post_decode_collapsed <- weights_array_wake_collapsed < .5
     
     if (leave_out_type == 1){
-      alpha <- ForwardAlt(post_decode_collapsed,init,tran_list,new_vcovar_mat)
+      alpha <- ForwardAlt(post_decode_collapsed,init,tran_list,new_vcovar_mat,
+                          mix_num = mix_num)
     } 
     
     post_decode_collapsed_true_vec <- as.vector(post_decode_collapsed_true)
@@ -1143,6 +1065,7 @@ if (leave_out){
       
       ind_med <- apply(new_act_working,2,median,na.rm = T)
       
+      ##### Activity-stratified state diagnostics #####
       #1 - below
       #2 - above
       #3 - total
@@ -1170,6 +1093,7 @@ if (leave_out){
         senspec_list[[leave_out_type]][[lohi_med]] <- pdc_tab
         
         senspec_mix_list[[leave_out_type]][[lohi_med]] <- vector(mode = "list", length = mix_num)
+        ##### Class-specific state diagnostics #####
         for (curr_class in 1:mix_num){
           # senspec_mix_list[[leave_out_type]][[curr_class]] <- empty_mat_sublist
           valid_inds_vec_mix <- as.vector(valid_inds[,mix_assignment_pred == curr_class])
@@ -1191,8 +1115,7 @@ if (leave_out){
     # senspec_list[[leave_out_type]] <- sens_spec_df
    
     
-    
-    
+    ##### Class assignment and survival diagnostics #####
     mix_assignment_pred <- c(mix_assignment_pred,c(1:mix_num))
     mix_assignment_true_ind <- c(mix_assignment_true[leave_out_inds],c(1:mix_num))
     conf_mat_ind <- table(mix_assignment_pred,mix_assignment_true_ind)
@@ -1208,7 +1131,7 @@ if (leave_out){
     ibs_new_list[[leave_out_type]] <- ibs
     ibs2_new_list[[leave_out_type]] <- ibs2
 
-  }
+  } # end information-removal scenarios
     
   
   
