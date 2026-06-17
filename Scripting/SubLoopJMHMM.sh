@@ -5,21 +5,21 @@
 #SBATCH --array=1-100
 #SBATCH -o LogFiles/%A_%a.out
 #SBATCH -e LogFiles/%A_%a.err
-RE_num=$1
-surv=$2
-real_data=$3
-bootstrap=$4
-randomize_init=$5
-leave_out=$6
-load_data=$7
-subset_data=$8
-sim_size=$9
+fit_mix_num=$1
+model_type=$2
+data_source=$3
+run_bootstrap=$4
+init_jitter_scale=$5
+run_leave_one_out_cv=$6
+use_hot_start=$7
+sim_scenario=$8
+true_mix_num=${9:-$fit_mix_num}
 date
 path="$HOME/JM"
 cd $path/Routputs
 start_time=$(date +%s)
 module load R/4.4.0
-Rscript $path/Rcode/JMHMM.R $RE_num $surv $real_data $bootstrap $randomize_init $leave_out $load_data $subset_data $sim_size
+Rscript $path/Rcode/JMHMM.R $fit_mix_num $model_type $data_source $run_bootstrap $init_jitter_scale $run_leave_one_out_cv $use_hot_start $sim_scenario $true_mix_num
 finish_time=$(date +%s)
 elapsed_time=$((finish_time  - start_time))
 

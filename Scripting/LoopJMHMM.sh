@@ -2,17 +2,16 @@
 
 TimeArray=("0" "36" "48" "72" "96" "120" "144" "160" "172" "196")
 MemArray=("0" "10" "10" "15" "20" "20" "25" "25" "30" "30" )
-for surv in 2 0; do
-    for RE_num in 5; do
-        for real_data in 1; do
-            for bootstrap in 0; do
-                for randomize_init in 0; do
-                    for leave_out in 1; do
-                        for load_data in 0; do
-                            for subset_data in 0; do
-                                for sim_size in 0; do
-                                    sbatch --time="${TimeArray[$RE_num]}":00:00 --mem="${MemArray[$RE_num]}"gb SubLoopJMHMM.sh $RE_num $surv $real_data $bootstrap $randomize_init $leave_out $load_data $subset_data $sim_size
-                                done
+true_mix_num=5
+for model_type in joint two_stage; do
+    for fit_mix_num in 5; do
+        for data_source in nhanes; do
+            for run_bootstrap in false; do
+                for init_jitter_scale in 0; do
+                    for run_leave_one_out_cv in true; do
+                        for use_hot_start in false; do
+                            for sim_scenario in 0; do
+                                sbatch --time="${TimeArray[$fit_mix_num]}":00:00 --mem="${MemArray[$fit_mix_num]}"gb SubLoopJMHMM.sh $fit_mix_num $model_type $data_source $run_bootstrap $init_jitter_scale $run_leave_one_out_cv $use_hot_start $sim_scenario $true_mix_num
                             done
                         done
                     done
@@ -21,5 +20,3 @@ for surv in 2 0; do
         done
     done
 done
-
-subset_data
