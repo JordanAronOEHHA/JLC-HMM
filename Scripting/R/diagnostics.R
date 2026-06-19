@@ -141,7 +141,13 @@ CalcClassEntropy <- function(re_prob){
   normalized_entropy <-
     -rowSums(normalized_prob * log_prob) / log(class_num)
 
-    return(mean(normalized_entropy))
+  list(
+    normalized_mean = mean(normalized_entropy),
+    normalized_median = median(normalized_entropy),
+    normalized_q25 = unname(quantile(normalized_entropy,0.25)),
+    normalized_q75 = unname(quantile(normalized_entropy,0.75)),
+    mean_max_posterior = mean(apply(normalized_prob,1,max))
+  )
 }
 
 # Evaluates the fitted cumulative baseline hazard on a new time grid.
