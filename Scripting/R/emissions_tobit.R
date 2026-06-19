@@ -50,7 +50,52 @@ CalcLintegralMat <- function(emit_act,emit_light,corr_mat,lod_act,lod_light){
 #above parameters are for debugging
 #calculates likelihood of emission dist
 #used in direct optimization
-EmitLogLike <- function(act,light,mu_act,sig_act,mu_light,sig_light,bivar_corr,lod_act,lod_light,vcovar_mat,vcovar_ind,weights_mat){
+PrepareEmitLogLikeData <- function(act,light,vcovar_mat){
+  vcovar_vec <- as.vector(vcovar_mat)
+  vcovar_levels <- sort(unique(vcovar_vec[!is.na(vcovar_vec)]))
+  vcovar_indices <- vector(mode = "list", length = 0)
+  for (vcovar_level in vcovar_levels){
+    vcovar_indices[[as.character(vcovar_level)]] <-
+      which(vcovar_vec == vcovar_level)
+  }
+
+  list(act_vec = as.vector(act),
+       light_vec = as.vector(light),
+       vcovar_indices = vcovar_indices)
+}
+
+GetEmitLogLikeSubset <- function(emit_data,vcovar_ind){
+  if (is.null(emit_data)){
+    return(NULL)
+  }
+
+  obs_index <- emit_data$vcovar_indices[[as.character(vcovar_ind)]]
+  if (is.null(obs_index)){
+    obs_index <- integer(0)
+  }
+
+  list(index = obs_index,
+       act = emit_data$act_vec[obs_index],
+       light = emit_data$light_vec[obs_index])
+}
+
+PrepareEmitOptimizationInputs <- function(emit_data,vcovar_ind,weights_array,re_ind){
+  emit_subset <- GetEmitLogLikeSubset(emit_data,vcovar_ind)
+  weights_vec <- NULL
+  weights_mat <- as.vector(weights_array[,,re_ind])
+
+  if (!is.null(emit_subset)){
+    weights_vec <- weights_mat[emit_subset$index]
+    weights_mat <- NULL
+  }
+
+  list(emit_subset = emit_subset,
+       weights_mat = weights_mat,
+       weights_vec = weights_vec)
+}
+
+EmitLogLike <- function(act,light,mu_act,sig_act,mu_light,sig_light,bivar_corr,lod_act,lod_light,vcovar_mat,vcovar_ind,weights_mat,
+                        emit_subset = NULL,weights_vec = NULL){
 
   #lower should theoretically be -Inf, but had some divergence issues
   lb <- mu_act - 5*sig_act
@@ -66,11 +111,23 @@ EmitLogLike <- function(act,light,mu_act,sig_act,mu_light,sig_light,bivar_corr,l
     lintegral <- -9999
   }
 
-  vcovar_vec <- as.vector(vcovar_mat)
-  vcovar_vec_indicator <- vcovar_vec == vcovar_ind
+  if (is.null(emit_subset)){
+    vcovar_vec <- as.vector(vcovar_mat)
+    vcovar_vec_indicator <- vcovar_vec == vcovar_ind
+    act_vec <- as.vector(act)[vcovar_vec_indicator]
+    light_vec <- as.vector(light)[vcovar_vec_indicator]
 
-  act_vec <- as.vector(act)[vcovar_vec_indicator]
-  light_vec <- as.vector(light)[vcovar_vec_indicator]
+    if (is.null(weights_vec)){
+      weights_vec <- weights_mat[vcovar_vec_indicator]
+    }
+  } else {
+    act_vec <- emit_subset$act
+    light_vec <- emit_subset$light
+
+    if (is.null(weights_vec)){
+      weights_vec <- as.vector(weights_mat)[emit_subset$index]
+    }
+  }
 
   log_like <- logClassificationCTobit(act_vec,light_vec,
                                  mu_act,
@@ -81,13 +138,15 @@ EmitLogLike <- function(act,light,mu_act,sig_act,mu_light,sig_light,bivar_corr,l
 
   log_like[log_like == -Inf] <- -9999
 
-  return(-sum(log_like * weights_mat[vcovar_vec_indicator]))
+  return(-sum(log_like * weights_vec))
 }
 
 #optimizes activity mean
 #all emission dist param calculated this way
 #comment out which parameter currently being optimized
-CalcActMean <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat){
+CalcActMean <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat,emit_data = NULL){
+  emit_inputs <- PrepareEmitOptimizationInputs(emit_data,vcovar_ind,
+                                               weights_array,re_ind)
 
   mu_act <- optimize(EmitLogLike, c(-10,10), act = act, light = light,
                      # mu_act = emit_act[mc_state,1,re_ind,vcovar_ind],
@@ -97,11 +156,15 @@ CalcActMean <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_m
                      bivar_corr = corr_mat[re_ind,mc_state,vcovar_ind],
                      lod_act = lod_act, lod_light = lod_light,
                      vcovar_mat = vcovar_mat, vcovar_ind = vcovar_ind,
-                     weights_mat = as.vector(weights_array[,,re_ind]))$minimum
+                     weights_mat = emit_inputs$weights_mat,
+                     emit_subset = emit_inputs$emit_subset,
+                     weights_vec = emit_inputs$weights_vec)$minimum
   return(mu_act)
 }
 
-CalcActSig <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat){
+CalcActSig <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat,emit_data = NULL){
+  emit_inputs <- PrepareEmitOptimizationInputs(emit_data,vcovar_ind,
+                                               weights_array,re_ind)
 
   mu_act <- optimize(EmitLogLike, c(0.1,10), act = act, light = light,
                      mu_act = emit_act[mc_state,1,re_ind,vcovar_ind],
@@ -111,11 +174,15 @@ CalcActSig <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_ma
                      bivar_corr = corr_mat[re_ind,mc_state,vcovar_ind],
                      lod_act = lod_act, lod_light = lod_light,
                      vcovar_mat = vcovar_mat, vcovar_ind = vcovar_ind,
-                     weights_mat = as.vector(weights_array[,,re_ind]))$minimum
+                     weights_mat = emit_inputs$weights_mat,
+                     emit_subset = emit_inputs$emit_subset,
+                     weights_vec = emit_inputs$weights_vec)$minimum
   return(mu_act)
 }
 
-CalcLightMean <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat){
+CalcLightMean <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat,emit_data = NULL){
+  emit_inputs <- PrepareEmitOptimizationInputs(emit_data,vcovar_ind,
+                                               weights_array,re_ind)
 
   mu_act <- optimize(EmitLogLike, c(-30,10), act = act, light = light,
                      mu_act = emit_act[mc_state,1,re_ind,vcovar_ind],
@@ -125,12 +192,16 @@ CalcLightMean <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr
                      bivar_corr = corr_mat[re_ind,mc_state,vcovar_ind],
                      lod_act = lod_act, lod_light = lod_light,
                      vcovar_mat = vcovar_mat, vcovar_ind = vcovar_ind,
-                     weights_mat = as.vector(weights_array[,,re_ind]))$minimum
+                     weights_mat = emit_inputs$weights_mat,
+                     emit_subset = emit_inputs$emit_subset,
+                     weights_vec = emit_inputs$weights_vec)$minimum
 
   return(mu_act)
 }
 
-CalcLightSig <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat){
+CalcLightSig <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat,emit_data = NULL){
+  emit_inputs <- PrepareEmitOptimizationInputs(emit_data,vcovar_ind,
+                                               weights_array,re_ind)
 
   mu_act <- optimize(EmitLogLike, c(0.01,20), act = act, light = light,
                      mu_act = emit_act[mc_state,1,re_ind,vcovar_ind],
@@ -140,11 +211,15 @@ CalcLightSig <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_
                      bivar_corr = corr_mat[re_ind,mc_state,vcovar_ind],
                      lod_act = lod_act, lod_light = lod_light,
                      vcovar_mat = vcovar_mat, vcovar_ind = vcovar_ind,
-                     weights_mat = as.vector(weights_array[,,re_ind]))$minimum
+                     weights_mat = emit_inputs$weights_mat,
+                     emit_subset = emit_inputs$emit_subset,
+                     weights_vec = emit_inputs$weights_vec)$minimum
   return(mu_act)
 }
 
-CalcBivarCorr <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat){
+CalcBivarCorr <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array,re_ind,vcovar_mat,emit_data = NULL){
+  emit_inputs <- PrepareEmitOptimizationInputs(emit_data,vcovar_ind,
+                                               weights_array,re_ind)
 
   mu_act <- optimize(EmitLogLike, c(-.999,.999), act = act, light = light,
                      mu_act = emit_act[mc_state,1,re_ind,vcovar_ind],
@@ -154,7 +229,9 @@ CalcBivarCorr <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr
                      # bivar_corr = corr_mat[re_ind,mc_state,vcovar_ind],
                      lod_act = lod_act, lod_light = lod_light,
                      vcovar_mat = vcovar_mat, vcovar_ind = vcovar_ind,
-                     weights_mat = as.vector(weights_array[,,re_ind]))$minimum
+                     weights_mat = emit_inputs$weights_mat,
+                     emit_subset = emit_inputs$emit_subset,
+                     weights_vec = emit_inputs$weights_vec)$minimum
   return(mu_act)
 }
 
@@ -162,6 +239,7 @@ CalcBivarCorr <- function(mc_state,vcovar_ind,act,light,emit_act,emit_light,corr
 #takes function as input, easier to process this way
 UpdateNorm <- function(FUN,mc_state,act,light,emit_act,emit_light,corr_mat,lod_act,lod_light,weights_array_wake,weights_array_sleep,vcovar_mat){
   opt_param_mat <- matrix(0,mix_num,2)
+  emit_data <- PrepareEmitLogLikeData(act,light,vcovar_mat)
 
   if(mc_state == 1){weights_array <- weights_array_wake}
   if(mc_state == 2){weights_array <- weights_array_sleep}
@@ -172,7 +250,8 @@ UpdateNorm <- function(FUN,mc_state,act,light,emit_act,emit_light,corr_mat,lod_a
                                               act,light,
                                               emit_act,emit_light,
                                               corr_mat,lod_act,lod_light,
-                                              weights_array,re_ind,vcovar_mat)
+                                              weights_array,re_ind,vcovar_mat,
+                                              emit_data = emit_data)
     }
   }
 

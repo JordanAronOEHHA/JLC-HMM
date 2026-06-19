@@ -9,27 +9,26 @@ SurvCovarRiskVec <- function(surv_covar,surv_coef){
 #calculates non-parametric baseline haz using breslow estimator
 CalcBLHaz <- function(surv_coef,beta_vec, re_prob,surv_covar_risk_vec,surv_event,surv_time,surv_covar){
   n <- length(surv_event)
-  bline_vec <- numeric(n)
-  cbline_vec <- numeric(n)
-
-  for (time_ind in 1:n){
-    risk_set <- surv_time >= surv_time[time_ind]
-    linear_surv_covar_risk <- surv_covar_risk_vec[risk_set]
-
-    if (dim(re_prob)[2] != 1){
-      denom <- sum((re_prob[risk_set,] %*% exp(beta_vec)) * exp(linear_surv_covar_risk))
-    } else {
-      denom <- sum(exp(linear_surv_covar_risk))
-    }
-
-    if (denom > .Machine$double.xmax){denom <- .Machine$double.xmax}
-    bline_vec[time_ind] <- surv_event[time_ind]/denom
+  if (n == 0){
+    return(list(numeric(0),numeric(0)))
   }
 
-  for(time_ind in 1:n){
-    anti_risk_set <- surv_time <= surv_time[time_ind]
-    cbline_vec[time_ind] <- sum(bline_vec[anti_risk_set])
+  if (!is.null(dim(re_prob)) && ncol(re_prob) != 1){
+    risk_score <- drop(re_prob %*% exp(beta_vec)) * exp(surv_covar_risk_vec)
+  } else {
+    risk_score <- exp(surv_covar_risk_vec)
   }
+
+  time_factor <- factor(surv_time,levels = sort(unique(surv_time)))
+  risk_by_time <- as.numeric(tapply(risk_score,time_factor,sum))
+  denom_by_time <- rev(cumsum(rev(risk_by_time)))
+  denom_by_time[denom_by_time > .Machine$double.xmax] <-
+    .Machine$double.xmax
+
+  bline_vec <- unname(surv_event / denom_by_time[as.integer(time_factor)])
+  bline_by_time <- as.numeric(tapply(bline_vec,time_factor,sum))
+  cbline_by_time <- cumsum(bline_by_time)
+  cbline_vec <- unname(cbline_by_time[as.integer(time_factor)])
 
   return(list(bline_vec,cbline_vec))
 }
