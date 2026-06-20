@@ -10,7 +10,7 @@ library(numDeriv)
 library(Matrix)
 library(Hmisc)
 library(survex)
-library(tidyverse)
+#library(tidyverse)
 
 source_jmhmm_module <- function(module_file){
   candidate_paths <- c(file.path("Scripting","R",module_file),
