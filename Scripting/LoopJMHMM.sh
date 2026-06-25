@@ -7,38 +7,38 @@ array_end=10
 
 # key: simulation_days|num_people|fit_mix_num|model_type|emission_overlap
 # value: recommended_time_hours memory_limit_gb
-ResourceLimit["1|5000|5|joint|low"]="4 10"
-ResourceLimit["3|5000|5|joint|low"]="3 10"
-ResourceLimit["7|5000|5|joint|low"]="4 24"
+ResourceLimit["1|5000|5|joint|low"]="8 10"
+ResourceLimit["3|5000|5|joint|low"]="8 10"
+ResourceLimit["7|5000|5|joint|low"]="8 24"
 
 ResourceLimit["1|5000|5|joint|high"]="13 10"
 ResourceLimit["3|5000|5|joint|high"]="19 10"
 ResourceLimit["7|5000|5|joint|high"]="29 24"
 
-ResourceLimit["1|5000|5|two_stage|low"]="7 10"
-ResourceLimit["3|5000|5|two_stage|low"]="3 10"
-ResourceLimit["7|5000|5|two_stage|low"]="5 24"
+ResourceLimit["1|5000|5|two_stage|low"]="8 10"
+ResourceLimit["3|5000|5|two_stage|low"]="8 10"
+ResourceLimit["7|5000|5|two_stage|low"]="8 24"
 
 ResourceLimit["1|5000|5|two_stage|high"]="12 10"
 ResourceLimit["3|5000|5|two_stage|high"]="19 10"
 ResourceLimit["7|5000|5|two_stage|high"]="28 24"
 
-ResourceLimit["1|5000|2|joint|low"]="1 10"
-ResourceLimit["1|5000|3|joint|low"]="1 10"
-ResourceLimit["1|5000|4|joint|low"]="2 10"
-ResourceLimit["1|5000|6|joint|low"]="5 10"
-ResourceLimit["1|5000|7|joint|low"]="7 10"
-ResourceLimit["1|5000|8|joint|low"]="8 10"
+ResourceLimit["1|5000|2|joint|low"]="8 10"
+ResourceLimit["1|5000|3|joint|low"]="8 10"
+ResourceLimit["1|5000|4|joint|low"]="8 10"
+ResourceLimit["1|5000|6|joint|low"]="10 10"
+ResourceLimit["1|5000|7|joint|low"]="10 10"
+ResourceLimit["1|5000|8|joint|low"]="10 10"
 
-ResourceLimit["3|5000|2|joint|low"]="1 10"
-ResourceLimit["3|5000|3|joint|low"]="2 10"
-ResourceLimit["3|5000|4|joint|low"]="4 10"
+ResourceLimit["3|5000|2|joint|low"]="8 10"
+ResourceLimit["3|5000|3|joint|low"]="8 10"
+ResourceLimit["3|5000|4|joint|low"]="8 10"
 ResourceLimit["3|5000|6|joint|low"]="16 10"
 ResourceLimit["3|5000|7|joint|low"]="18 12"
 ResourceLimit["3|5000|8|joint|low"]="22 12"
 
-ResourceLimit["7|5000|2|joint|low"]="3 18"
-ResourceLimit["7|5000|3|joint|low"]="9 18"
+ResourceLimit["7|5000|2|joint|low"]="10 18"
+ResourceLimit["7|5000|3|joint|low"]="12 18"
 ResourceLimit["7|5000|4|joint|low"]="17 20"
 ResourceLimit["7|5000|6|joint|low"]="35 24"
 ResourceLimit["7|5000|7|joint|low"]="38 28"
@@ -83,7 +83,7 @@ ScenarioKeys=(
     "7|5000|8|joint|low"
 )
 
-manifest_file="Output/expected_jobs.tsv"
+manifest_file="expected_jobs.tsv"
 run_id=$(date +"%Y%m%d_%H%M%S")
 
 mkdir -p "$(dirname "$manifest_file")"
