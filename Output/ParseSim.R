@@ -383,3 +383,6 @@ scenario_counts_file <- if (grepl("[.]rds$",output_file,ignore.case = TRUE)){
 
 # saveRDS(scenario_counts,scenario_counts_file)
 # message("Saved scenario counts to: ",scenario_counts_file)
+
+scenario_counts |> dplyr::select(fit_mix_num,model_type,simulation_days,emission_overlap,n_seeds,max_time_limit_hours,recommended_time_hours,recommended_mem_gb,) |>
+  dplyr::arrange(fit_mix_num,model_type,simulation_days,emission_overlap) 
